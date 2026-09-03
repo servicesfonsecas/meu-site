@@ -547,6 +547,20 @@ tr.cancelled td.status-cell{text-decoration:none;}
   </div>
 </div>
 
+<!-- MODAL PAGAMENTO PARCIAL -->
+<div class="overlay" id="modal-parcial-overlay">
+  <div class="modal" style="max-width:380px;">
+    <h3>Registrar pagamento parcial</h3>
+    <p id="parcial-info" style="font-size:13.5px;color:var(--ink-soft);margin-top:4px;line-height:1.5;"></p>
+    <label>Valor pago agora (R$)</label>
+    <input type="number" id="parcial-valor" min="0" step="0.01" placeholder="0,00">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-cancelar-parcial">Cancelar</button>
+      <button class="btn btn-primary" id="btn-confirmar-parcial">Registrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL VENDA PENDENTE (MERGE) -->
 <div class="overlay" id="modal-merge-overlay">
   <div class="modal" style="max-width:460px;">
@@ -661,6 +675,7 @@ function toDbVenda(v){
     cliente_contato: v.clienteContato || null,
     status_pagamento: v.statusPagamento || 'Aguardando Pagamento',
     cobrado_em: v.cobradoEm || null,
+    valor_pago_parcial: v.valorPagoParcial || 0,
     cancelada: !!v.cancelada
   };
 }
@@ -685,6 +700,7 @@ function fromDbVenda(row){
     clienteContato: row.cliente_contato || '',
     statusPagamento: row.status_pagamento || 'Aguardando Pagamento',
     cobradoEm: row.cobrado_em || null,
+    valorPagoParcial: Number(row.valor_pago_parcial || 0),
     cancelada: !!row.cancelada
   };
 }
@@ -1574,7 +1590,6 @@ function atualizarVencidosAutomatico(){
 }
 
 // ---------- Controle Financeiro ----------
-// ---------- Controle Financeiro ----------
 let financeiroGrupos = {};
 
 function renderFinanceiro(){
@@ -1595,13 +1610,16 @@ function renderFinanceiro(){
         dataPagamento: v.dataPagamento,
         statusPior: 'Aguardando Pagamento',
         total: 0,
+        totalAbatido: 0,
         cobradoEm: null
       };
     }
     grupos[key].total += v.total;
+    grupos[key].totalAbatido += (v.valorPagoParcial || 0);
     if(status === 'Vencido') grupos[key].statusPior = 'Vencido';
     if(v.cobradoEm && (!grupos[key].cobradoEm || v.cobradoEm > grupos[key].cobradoEm)) grupos[key].cobradoEm = v.cobradoEm;
   });
+  Object.values(grupos).forEach(g => { g.saldoDevedor = Math.max(0, g.total - g.totalAbatido); });
 
   const dataDe = document.getElementById('fin-data-de').value;
   const dataAte = document.getElementById('fin-data-ate').value;
@@ -1611,8 +1629,8 @@ function renderFinanceiro(){
 
   const lista = listaBruta.sort((a,b)=> new Date(a.dataPagamento||a.data) - new Date(b.dataPagamento||b.data));
   financeiroGrupos = grupos;
-  const totalAReceber = lista.reduce((s,g)=>s+g.total,0);
-  const totalVencido = lista.filter(g=>g.statusPior==='Vencido').reduce((s,g)=>s+g.total,0);
+  const totalAReceber = lista.reduce((s,g)=>s+g.saldoDevedor,0);
+  const totalVencido = lista.filter(g=>g.statusPior==='Vencido').reduce((s,g)=>s+g.saldoDevedor,0);
   const qtdAguardando = lista.filter(g=>g.statusPior==='Aguardando Pagamento').length;
   const qtdVencido = lista.filter(g=>g.statusPior==='Vencido').length;
 
@@ -1646,11 +1664,12 @@ function renderFinanceiro(){
       <td>${fmtDate(g.data)}</td>
       <td>${g.dataPagamento ? new Date(g.dataPagamento+'T00:00').toLocaleDateString('pt-BR') : '—'}</td>
       <td class="num" style="color:${cor};font-weight:600;">${prazoTxt}</td>
-      <td class="num">${mv(g.total)}</td>
+      <td class="num">${mv(g.saldoDevedor)}${g.totalAbatido>0 ? `<div class="lookup-row-meta">de ${brl(g.total)}, pago ${brl(g.totalAbatido)}</div>` : ''}</td>
       <td><span class="badge" style="background:${fundo};color:${cor};">${g.statusPior}</span></td>
       <td style="white-space:nowrap;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-ghost btn-sm" ${g.clienteContato?'':'disabled title="Sem contato cadastrado"'} onclick="cobrarWhatsApp('${g.key}')">📲 Cobrar</button>
+          <button class="btn btn-ghost btn-sm" onclick="abrirPagamentoParcial('${g.key}')">💵 Parcial</button>
           <button class="btn btn-primary btn-sm" onclick="marcarGrupoPago('${g.key}')">Pago</button>
           ${g.cobradoEm ? `<span class="badge" style="background:#DCEAE3;color:var(--primary-dark);white-space:nowrap;" title="Cobrado em ${fmtDate(g.cobradoEm)}">✓ Cobrado</span>` : ''}
         </div>
@@ -1703,7 +1722,7 @@ function montarMensagemCobranca(g){
 
   return `Olá${primeiroNome?', '+primeiroNome:''}, tudo bem? ${EMOJI_SORRISO}\n\n`
     + `Passando para lembrar que ${fraseVencimento}\n\n`
-    + `${EMOJI_DINHEIRO} Valor a pagar: ${brl(g.total)}\n`
+    + `${EMOJI_DINHEIRO} Valor a pagar: ${brl(g.saldoDevedor != null ? g.saldoDevedor : g.total)}\n`
     + linhaPix
     + `\nAssim que realizar o pagamento, por gentileza, envie o comprovante por aqui para que possamos confirmar. ${EMOJI_CHECK}\n\n`
     + `Agradecemos pela confiança e por fazer parte da família ${nomeEmpresa}! ${EMOJI_CORACAO} É um prazer tê-lo(a) como nosso cliente!\n\n`
@@ -1738,6 +1757,50 @@ window.copiarMensagemCobranca = async function(key){
     showToast('Não foi possível copiar automaticamente. Copie manualmente do texto exibido.');
   }
 };
+
+let parcialGrupoAtual = null;
+const parcialOverlay = document.getElementById('modal-parcial-overlay');
+
+window.abrirPagamentoParcial = function(key){
+  const g = financeiroGrupos[key];
+  if(!g) return;
+  parcialGrupoAtual = key;
+  document.getElementById('parcial-info').innerHTML =
+    `Saldo devedor de <strong>${g.clienteNome || 'cliente'}</strong>: <strong>${brl(g.saldoDevedor)}</strong>${g.totalAbatido > 0 ? ` (de um total de ${brl(g.total)}, já foi pago ${brl(g.totalAbatido)})` : ''}.`;
+  const input = document.getElementById('parcial-valor');
+  input.value = '';
+  input.max = g.saldoDevedor;
+  parcialOverlay.classList.add('active');
+};
+document.getElementById('btn-cancelar-parcial').addEventListener('click', ()=>{
+  parcialOverlay.classList.remove('active');
+  parcialGrupoAtual = null;
+});
+parcialOverlay.addEventListener('click', e=>{ if(e.target===parcialOverlay){ parcialOverlay.classList.remove('active'); parcialGrupoAtual=null; } });
+
+document.getElementById('btn-confirmar-parcial').addEventListener('click', async ()=>{
+  const g = financeiroGrupos[parcialGrupoAtual];
+  if(!g) return;
+  const valor = parseFloat(document.getElementById('parcial-valor').value);
+  if(!valor || valor <= 0){ showToast('Informe um valor válido.'); return; }
+  if(valor > g.saldoDevedor + 0.01){ showToast('O valor não pode ser maior que o saldo devedor.'); return; }
+
+  const itens = sales.filter(v => (v.vendaGrupo || v.id) === parcialGrupoAtual && !v.cancelada && (v.statusPagamento || 'Aguardando Pagamento') !== 'Pago');
+  if(!itens.length) return;
+  itens[0].valorPagoParcial = (itens[0].valorPagoParcial || 0) + valor;
+
+  const novoAbatido = itens.reduce((s,it)=>s+(it.valorPagoParcial||0),0);
+  const totalGrupo = itens.reduce((s,it)=>s+it.total,0);
+  const quitado = novoAbatido >= totalGrupo - 0.01;
+  if(quitado) itens.forEach(it => it.statusPagamento = 'Pago');
+
+  await saveSales();
+  parcialOverlay.classList.remove('active');
+  parcialGrupoAtual = null;
+  renderFinanceiro();
+  renderHistorico();
+  showToast(quitado ? 'Pagamento registrado — cobrança quitada!' : 'Pagamento parcial registrado.');
+});
 
 window.marcarGrupoPago = async function(key){
   const itens = sales.filter(v => (v.vendaGrupo || v.id) === key && !v.cancelada && (v.statusPagamento || 'Aguardando Pagamento') !== 'Pago');
