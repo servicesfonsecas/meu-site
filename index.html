@@ -410,6 +410,7 @@ tr.cancelled td.status-cell{text-decoration:none;}
           <input type="date" id="fin-data-ate" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-family:'Inter',sans-serif;font-size:14px;background:var(--surface);">
         </div>
         <button class="btn btn-ghost" id="btn-fin-limpar-filtro">Limpar filtro</button>
+        <button class="btn btn-ghost" id="btn-editar-modelo-cobranca" style="margin-left:auto;">✎ Mensagem de cobrança</button>
       </div>
       <div class="cards" id="fin-cards" style="margin-bottom:18px;"></div>
       <div style="overflow-x:auto;">
@@ -512,6 +513,41 @@ tr.cancelled td.status-cell{text-decoration:none;}
     <div class="modal-actions">
       <button class="btn btn-ghost" id="btn-cancelar-produto">Cancelar</button>
       <button class="btn btn-primary" id="btn-salvar-produto">Salvar produto</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL ENVIAR COBRANÇA -->
+<div class="overlay" id="modal-cobranca-overlay">
+  <div class="modal" style="max-width:560px;">
+    <h3>Enviar cobrança</h3>
+    <p id="cobranca-para" style="margin:-8px 0 4px;font-size:13px;color:var(--ink-soft);"></p>
+    <label>Mensagem (você pode editar antes de enviar)</label>
+    <textarea id="cobranca-texto" rows="13" style="min-height:240px;line-height:1.45;"></textarea>
+    <p style="font-size:12px;color:var(--ink-soft);margin:8px 0 0;">A edição vale só para este envio. Para mudar o texto padrão, use <a href="#" id="cobranca-ir-modelo" style="color:var(--primary);font-weight:600;">Editar modelo padrão</a>.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-cobranca-cancelar">Cancelar</button>
+      <button class="btn btn-ghost" id="btn-cobranca-copiar">Copiar</button>
+      <button class="btn btn-primary" id="btn-cobranca-enviar">📲 Enviar no WhatsApp</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL MODELO DE COBRANÇA -->
+<div class="overlay" id="modal-modelo-overlay">
+  <div class="modal" style="max-width:640px;">
+    <h3>Mensagem de cobrança padrão</h3>
+    <p style="margin:-8px 0 8px;font-size:13px;color:var(--ink-soft);">Escreva do seu jeito. Clique nos campos abaixo para inserir dados que são preenchidos automaticamente para cada cliente.</p>
+    <div class="tema-presets" id="modelo-chips"></div>
+    <textarea id="modelo-texto" rows="12" style="min-height:230px;line-height:1.45;"></textarea>
+    <label>Prévia</label>
+    <div id="modelo-previa" style="white-space:pre-wrap;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13.5px;line-height:1.45;max-height:220px;overflow:auto;"></div>
+    <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap;">
+      <button class="btn btn-ghost" id="btn-modelo-padrao" type="button">↺ Restaurar texto original</button>
+      <span style="display:flex;gap:10px;">
+        <button class="btn btn-ghost" id="btn-modelo-cancelar">Cancelar</button>
+        <button class="btn btn-primary" id="btn-modelo-salvar">Salvar</button>
+      </span>
     </div>
   </div>
 </div>
@@ -802,19 +838,19 @@ async function loadEmpresa(){
   if(supabaseConfigurado){
     const {data, error} = await supabaseClient.from('empresa').select('*').eq('id',1).maybeSingle();
     if(error){ console.error(error); return {}; }
-    return data ? {nome:data.nome||'', logo:data.logo||null, ocultarCusto: !!data.ocultar_custo, chavePix: data.chave_pix||'', cores: (data.cores !== undefined ? data.cores : (()=>{try{return JSON.parse(localStorage.getItem('temaCores')||'null');}catch(e){return null;}})())} : {};
+    return data ? {nome:data.nome||'', logo:data.logo||null, ocultarCusto: !!data.ocultar_custo, chavePix: data.chave_pix||'', msgCobranca: (data.msg_cobranca !== undefined ? (data.msg_cobranca||null) : (()=>{try{return localStorage.getItem('msgCobranca')||null;}catch(e){return null;}})()), cores: (data.cores !== undefined ? data.cores : (()=>{try{return JSON.parse(localStorage.getItem('temaCores')||'null');}catch(e){return null;}})())} : {};
   }
   const v = await storageGet('empresa'); return v ? JSON.parse(v) : {};
 }
 async function saveEmpresa(){
   if(supabaseConfigurado){
     const base = {id:1, nome: empresa.nome||null, logo: empresa.logo||null, ocultar_custo: !!empresa.ocultarCusto, chave_pix: empresa.chavePix||null};
-    let {error} = await supabaseClient.from('empresa').upsert({...base, cores: empresa.cores||null});
-    if(error && /cores/i.test(error.message||'')){
-      // coluna "cores" ainda não existe no banco: salva o restante e avisa
+    let {error} = await supabaseClient.from('empresa').upsert({...base, cores: empresa.cores||null, msg_cobranca: empresa.msgCobranca||null});
+    if(error && /cores|msg_cobranca/i.test(error.message||'')){
+      // colunas novas ainda não existem no banco: salva o restante e avisa
       console.error(error);
       ({error} = await supabaseClient.from('empresa').upsert(base));
-      showToast('Cores salvas só neste aparelho. Rode no Supabase: alter table public.empresa add column if not exists cores jsonb;');
+      showToast('Personalização salva só neste aparelho. Rode no Supabase o SQL das colunas novas (cores e msg_cobranca).');
       if(!error) return;
     }
     if(error){ console.error(error); showToast('Erro ao salvar empresa no banco de dados.'); }
@@ -1020,6 +1056,7 @@ document.getElementById('btn-tema-padrao').addEventListener('click', ()=>{
 
 function renderBrand(){
   aplicarTema(empresa.cores); guardarTemaCache(empresa.cores);
+  try{ if(empresa.msgCobranca) localStorage.setItem('msgCobranca', empresa.msgCobranca); else localStorage.removeItem('msgCobranca'); }catch(e){}
   document.getElementById('brand-name').innerHTML = empresa.nome ? empresa.nome.replace(/\n/g,'<br>') : 'Controle de<br>Estoque';
   const wrap = document.getElementById('brand-logo-wrap');
   wrap.innerHTML = empresa.logo
@@ -1909,15 +1946,27 @@ function formatarTelefoneWhatsApp(contato){
   return digitos;
 }
 
-function montarMensagemCobranca(g){
+const CAMPOS_COBRANCA = [
+  ['{nome}','Primeiro nome'],
+  ['{cliente}','Nome completo'],
+  ['{valor}','Valor a pagar'],
+  ['{situacao}','Frase do vencimento'],
+  ['{vencimento}','Data de vencimento'],
+  ['{pix}','Chave Pix'],
+  ['{empresa}','Nome da empresa']
+];
+function modeloCobrancaPadrao(){
+  const E = {sorriso:'\u{1F60A}', dinheiro:'\u{1F4B0}', celular:'\u{1F4F2}', check:'✅', coracao:'\u{1F499}', mao:'\u{1F91D}'};
+  return `Olá, {nome}, tudo bem? ${E.sorriso}\n\n`
+    + `Passando para lembrar que {situacao}\n\n`
+    + `${E.dinheiro} Valor a pagar: {valor}\n\n`
+    + `${E.celular} Chave Pix: {pix}\n\n`
+    + `Assim que realizar o pagamento, por gentileza, envie o comprovante por aqui para que possamos confirmar. ${E.check}\n\n`
+    + `Agradecemos pela confiança e por fazer parte da família {empresa}! ${E.coracao} É um prazer tê-lo(a) como nosso cliente!\n\n`
+    + `Ficamos à disposição. ${E.mao}`;
+}
+function montarMensagemCobranca(g, modelo){
   const EMOJI_CALENDARIO = '\u{1F4C5}';   // 📅
-  const EMOJI_SORRISO = '\u{1F60A}';      // 😊
-  const EMOJI_DINHEIRO = '\u{1F4B0}';     // 💰
-  const EMOJI_CELULAR = '\u{1F4F2}';      // 📲
-  const EMOJI_CHECK = '\u{2705}';         // ✅
-  const EMOJI_CORACAO = '\u{1F499}';      // 💙
-  const EMOJI_APERTO_MAO = '\u{1F91D}';   // 🤝
-
   const nomeEmpresa = empresa.nome || 'nossa loja';
   const primeiroNome = (g.clienteNome || '').split(' ')[0] || '';
   const hoje = hojeLocalStr();
@@ -1934,45 +1983,105 @@ function montarMensagemCobranca(g){
     fraseVencimento = `o vencimento do seu pagamento está previsto para ${dataVencFmt}. ${EMOJI_CALENDARIO}`;
   }
 
-  const linhaPix = empresa.chavePix ? `\n${EMOJI_CELULAR} Chave Pix: ${empresa.chavePix}\n` : '';
-
-  return `Olá${primeiroNome?', '+primeiroNome:''}, tudo bem? ${EMOJI_SORRISO}\n\n`
-    + `Passando para lembrar que ${fraseVencimento}\n\n`
-    + `${EMOJI_DINHEIRO} Valor a pagar: ${brl(g.saldoDevedor != null ? g.saldoDevedor : g.total)}\n`
-    + linhaPix
-    + `\nAssim que realizar o pagamento, por gentileza, envie o comprovante por aqui para que possamos confirmar. ${EMOJI_CHECK}\n\n`
-    + `Agradecemos pela confiança e por fazer parte da família ${nomeEmpresa}! ${EMOJI_CORACAO} É um prazer tê-lo(a) como nosso cliente!\n\n`
-    + `Ficamos à disposição. ${EMOJI_APERTO_MAO}`;
+  let texto = (modelo || empresa.msgCobranca || modeloCobrancaPadrao());
+  // sem Pix cadastrado: remove a linha que usa {pix}
+  if(!empresa.chavePix){
+    const linhas = texto.split('\n');
+    const sem = linhas.filter(l=>!l.includes('{pix}'));
+    texto = sem.some(l=>l.trim()) ? sem.join('\n') : texto;   // se só existir essa linha, mantém e deixa o campo vazio
+  }
+  // sem nome: tira ", {nome}"
+  if(!primeiroNome) texto = texto.replace(/,?\s*\{nome\}/g,'');
+  const valores = {
+    '{nome}': primeiroNome,
+    '{cliente}': g.clienteNome || '',
+    '{valor}': brl(g.saldoDevedor != null ? g.saldoDevedor : g.total),
+    '{situacao}': fraseVencimento,
+    '{vencimento}': dataVencFmt,
+    '{pix}': empresa.chavePix || '',
+    '{empresa}': nomeEmpresa
+  };
+  texto = texto.replace(/\{(nome|cliente|valor|situacao|vencimento|pix|empresa)\}/g, m=>valores[m]);
+  return texto.replace(/\n{3,}/g,'\n\n').trim();
 }
 
-window.cobrarWhatsApp = async function(key){
+// ---- Enviar cobrança (com edição manual antes do envio)
+let cobrancaChave = null;
+const cobrancaOverlay = document.getElementById('modal-cobranca-overlay');
+window.cobrarWhatsApp = function(key){
   const g = financeiroGrupos[key];
   if(!g || !g.clienteContato){ showToast('Este cliente não tem contato cadastrado.'); return; }
+  if(!formatarTelefoneWhatsApp(g.clienteContato)){ showToast('Número de contato inválido.'); return; }
+  cobrancaChave = key;
+  document.getElementById('cobranca-para').textContent = `Para: ${g.clienteNome || 'cliente'} · ${g.clienteContato}`;
+  document.getElementById('cobranca-texto').value = montarMensagemCobranca(g);
+  cobrancaOverlay.classList.add('active');
+};
+document.getElementById('btn-cobranca-cancelar').addEventListener('click', ()=>cobrancaOverlay.classList.remove('active'));
+cobrancaOverlay.addEventListener('click', e=>{ if(e.target===cobrancaOverlay) cobrancaOverlay.classList.remove('active'); });
+document.getElementById('btn-cobranca-copiar').addEventListener('click', async ()=>{
+  try{ await navigator.clipboard.writeText(document.getElementById('cobranca-texto').value); showToast('Mensagem copiada! Cole no WhatsApp.'); }
+  catch(e){ console.error(e); showToast('Não foi possível copiar automaticamente. Selecione o texto e copie.'); }
+});
+document.getElementById('btn-cobranca-enviar').addEventListener('click', async ()=>{
+  const key = cobrancaChave;
+  const g = financeiroGrupos[key];
+  if(!g){ cobrancaOverlay.classList.remove('active'); return; }
+  const mensagem = document.getElementById('cobranca-texto').value.trim();
+  if(!mensagem){ showToast('A mensagem está vazia.'); return; }
   const telefone = formatarTelefoneWhatsApp(g.clienteContato);
-  if(!telefone){ showToast('Número de contato inválido.'); return; }
-  const mensagem = montarMensagemCobranca(g);
-  const url = `https://wa.me/${telefone}?text=${encodeURIComponent(mensagem)}`;
-  window.open(url, '_blank');
+  window.open(`https://wa.me/${telefone}?text=${encodeURIComponent(mensagem)}`, '_blank');
+  cobrancaOverlay.classList.remove('active');
 
   const agora = new Date().toISOString();
   const itens = sales.filter(v => (v.vendaGrupo || v.id) === key && !v.cancelada);
   itens.forEach(v => v.cobradoEm = agora);
   await saveSales();
   renderFinanceiro();
-};
+});
 
 window.copiarMensagemCobranca = async function(key){
   const g = financeiroGrupos[key];
   if(!g){ return; }
-  const mensagem = montarMensagemCobranca(g);
-  try{
-    await navigator.clipboard.writeText(mensagem);
-    showToast('Mensagem copiada! Cole no WhatsApp.');
-  }catch(e){
-    console.error(e);
-    showToast('Não foi possível copiar automaticamente. Copie manualmente do texto exibido.');
-  }
+  try{ await navigator.clipboard.writeText(montarMensagemCobranca(g)); showToast('Mensagem copiada! Cole no WhatsApp.'); }
+  catch(e){ console.error(e); showToast('Não foi possível copiar automaticamente.'); }
 };
+
+// ---- Editor do modelo padrão
+const modeloOverlay = document.getElementById('modal-modelo-overlay');
+const modeloTexto = document.getElementById('modelo-texto');
+function atualizarPreviaModelo(){
+  const exemplo = Object.values(financeiroGrupos || {})[0] || {clienteNome:'Maria Silva', total:350, dataPagamento: hojeLocalStr()};
+  document.getElementById('modelo-previa').textContent = montarMensagemCobranca(exemplo, modeloTexto.value);
+}
+function abrirModeloCobranca(){
+  modeloTexto.value = empresa.msgCobranca || modeloCobrancaPadrao();
+  const chips = document.getElementById('modelo-chips');
+  chips.innerHTML = CAMPOS_COBRANCA.map(([tag,nome])=>`<button type="button" class="tema-preset" data-tag="${tag}" title="${tag}">＋ ${nome}</button>`).join('');
+  chips.querySelectorAll('button').forEach(b=>b.addEventListener('click', ()=>{
+    const ini = modeloTexto.selectionStart, fim = modeloTexto.selectionEnd, tag = b.dataset.tag;
+    modeloTexto.value = modeloTexto.value.slice(0,ini) + tag + modeloTexto.value.slice(fim);
+    modeloTexto.focus(); modeloTexto.selectionStart = modeloTexto.selectionEnd = ini + tag.length;
+    atualizarPreviaModelo();
+  }));
+  atualizarPreviaModelo();
+  modeloOverlay.classList.add('active');
+}
+modeloTexto.addEventListener('input', atualizarPreviaModelo);
+document.getElementById('btn-editar-modelo-cobranca').addEventListener('click', abrirModeloCobranca);
+document.getElementById('cobranca-ir-modelo').addEventListener('click', e=>{ e.preventDefault(); cobrancaOverlay.classList.remove('active'); abrirModeloCobranca(); });
+document.getElementById('btn-modelo-padrao').addEventListener('click', ()=>{ modeloTexto.value = modeloCobrancaPadrao(); atualizarPreviaModelo(); });
+document.getElementById('btn-modelo-cancelar').addEventListener('click', ()=>modeloOverlay.classList.remove('active'));
+modeloOverlay.addEventListener('click', e=>{ if(e.target===modeloOverlay) modeloOverlay.classList.remove('active'); });
+document.getElementById('btn-modelo-salvar').addEventListener('click', async ()=>{
+  const txt = modeloTexto.value.trim();
+  if(!txt){ showToast('O texto não pode ficar vazio.'); return; }
+  empresa.msgCobranca = (txt === modeloCobrancaPadrao().trim()) ? null : txt;
+  try{ if(empresa.msgCobranca) localStorage.setItem('msgCobranca', empresa.msgCobranca); else localStorage.removeItem('msgCobranca'); }catch(e){}
+  await saveEmpresa();
+  modeloOverlay.classList.remove('active');
+  showToast('Mensagem de cobrança salva.');
+});
 
 function montarMensagemAniversario(cliente){
   const EMOJI_BOLO = '\u{1F382}';       // 🎂
