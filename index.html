@@ -256,7 +256,7 @@ tr.cancelled td.status-cell{text-decoration:none;}
       </div>
       <div style="overflow-x:auto;">
       <table>
-        <thead><tr><th>Nome</th><th>Contato</th><th>Observações</th><th>Ações</th></tr></thead>
+        <thead><tr><th>Nome</th><th>Contato</th><th>Aniversário</th><th>Observações</th><th>Ações</th></tr></thead>
         <tbody id="clientes-body"></tbody>
       </table>
       </div>
@@ -537,6 +537,10 @@ tr.cancelled td.status-cell{text-decoration:none;}
     <label>Contato (telefone)</label>
     <input type="text" id="cliente-contato" placeholder="Ex: (11) 98888-7777">
 
+    <label>Data de nascimento</label>
+    <input type="date" id="cliente-nascimento">
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:6px 0 0;">No mês de aniversário, um botão de envio de mensagem com 10% de desconto é liberado na lista de clientes.</p>
+
     <label>Observações</label>
     <textarea id="cliente-observacoes" placeholder="Opcional"></textarea>
 
@@ -741,10 +745,10 @@ async function saveSales(){
 }
 
 function toDbCliente(c){
-  return { id: c.id, nome: c.nome, contato: c.contato || null, observacoes: c.observacoes || null };
+  return { id: c.id, nome: c.nome, contato: c.contato || null, observacoes: c.observacoes || null, data_nascimento: c.dataNascimento || null };
 }
 function fromDbCliente(row){
-  return { id: row.id, nome: row.nome, contato: row.contato || '', observacoes: row.observacoes || '' };
+  return { id: row.id, nome: row.nome, contato: row.contato || '', observacoes: row.observacoes || '', dataNascimento: row.data_nascimento || '' };
 }
 async function loadClientes(){
   if(supabaseConfigurado){
@@ -968,6 +972,24 @@ function renderProdutos(){
 document.getElementById('produto-search').addEventListener('input', renderProdutos);
 
 // ---------- Clientes ----------
+const MESES_PT = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+
+function mesAniversario(dataNasc){
+  if(!dataNasc) return null;
+  const mes = parseInt(dataNasc.split('-')[1], 10);
+  return Number.isFinite(mes) ? mes : null;
+}
+function estaNoMesAniversario(dataNasc){
+  const mes = mesAniversario(dataNasc);
+  return mes !== null && mes === (new Date().getMonth()+1);
+}
+function formatarAniversario(dataNasc){
+  if(!dataNasc) return '';
+  const partes = dataNasc.split('-');
+  if(partes.length < 3) return '';
+  return `${partes[2]}/${partes[1]}`;
+}
+
 function renderClientes(){
   const term = (document.getElementById('cliente-search').value||'').toLowerCase();
   const list = clientes.filter(c=>
@@ -975,20 +997,32 @@ function renderClientes(){
   ).sort((a,b)=> a.nome.localeCompare(b.nome));
   const body = document.getElementById('clientes-body');
   if(!list.length){
-    body.innerHTML = '<tr><td colspan="4" class="empty">Nenhum cliente cadastrado.</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="empty">Nenhum cliente cadastrado.</td></tr>';
     return;
   }
-  body.innerHTML = list.map(c=>`
+  body.innerHTML = list.map(c=>{
+    let botaoAniversario = '';
+    if(c.dataNascimento){
+      if(estaNoMesAniversario(c.dataNascimento)){
+        botaoAniversario = `<button class="btn btn-primary btn-sm" onclick="enviarAniversarioWhatsApp('${c.id}')" title="Enviar mensagem de aniversário com 10% de desconto">🎂 Enviar desconto</button>`;
+      } else {
+        const nomeMes = MESES_PT[mesAniversario(c.dataNascimento)-1];
+        botaoAniversario = `<button class="btn btn-ghost btn-sm" disabled style="opacity:.45;cursor:not-allowed;" title="Disponível em ${nomeMes}">🎂 Aniversário</button>`;
+      }
+    }
+    return `
     <tr>
       <td>${c.nome}</td>
       <td>${c.contato || '—'}</td>
+      <td class="mono" style="font-size:13px;">${c.dataNascimento ? formatarAniversario(c.dataNascimento) : '—'}</td>
       <td style="color:var(--ink-soft);font-size:13px;">${c.observacoes || ''}</td>
       <td style="white-space:nowrap;">
         <button class="btn btn-ghost btn-sm" onclick="openEditCliente('${c.id}')">Editar</button>
+        ${botaoAniversario}
         <button class="btn btn-danger btn-sm" onclick="deleteCliente('${c.id}')">Excluir</button>
       </td>
     </tr>
-  `).join('');
+  `;}).join('');
   atualizarSelectClientes();
 }
 document.getElementById('cliente-search').addEventListener('input', renderClientes);
@@ -1001,6 +1035,7 @@ function openNewCliente(){
   document.getElementById('cliente-id').value = '';
   document.getElementById('cliente-nome').value = '';
   document.getElementById('cliente-contato').value = '';
+  document.getElementById('cliente-nascimento').value = '';
   document.getElementById('cliente-observacoes').value = '';
   clienteOverlay.classList.add('active');
 }
@@ -1012,6 +1047,7 @@ window.openEditCliente = function(id){
   document.getElementById('cliente-id').value = c.id;
   document.getElementById('cliente-nome').value = c.nome;
   document.getElementById('cliente-contato').value = c.contato || '';
+  document.getElementById('cliente-nascimento').value = c.dataNascimento || '';
   document.getElementById('cliente-observacoes').value = c.observacoes || '';
   clienteOverlay.classList.add('active');
 };
@@ -1040,6 +1076,7 @@ document.getElementById('btn-salvar-cliente').addEventListener('click', async ()
     id: id || uid(),
     nome,
     contato: document.getElementById('cliente-contato').value.trim(),
+    dataNascimento: document.getElementById('cliente-nascimento').value || '',
     observacoes: document.getElementById('cliente-observacoes').value.trim()
   };
   if(id){
@@ -1756,6 +1793,34 @@ window.copiarMensagemCobranca = async function(key){
     console.error(e);
     showToast('Não foi possível copiar automaticamente. Copie manualmente do texto exibido.');
   }
+};
+
+function montarMensagemAniversario(cliente){
+  const EMOJI_BOLO = '\u{1F382}';       // 🎂
+  const EMOJI_FESTA = '\u{1F389}';      // 🎉
+  const EMOJI_PRESENTE = '\u{1F381}';   // 🎁
+  const EMOJI_CORACAO = '\u{1F499}';    // 💙
+
+  const nomeEmpresa = empresa.nome || 'nossa loja';
+  const primeiroNome = (cliente.nome || '').split(' ')[0] || '';
+  const nomeMes = MESES_PT[mesAniversario(cliente.dataNascimento)-1];
+
+  return `Feliz aniversário${primeiroNome?', '+primeiroNome:''}! ${EMOJI_BOLO}${EMOJI_FESTA}\n\n`
+    + `Para comemorar com você, a ${nomeEmpresa} preparou um presente: ${EMOJI_PRESENTE} 10% de desconto em qualquer compra feita durante todo o mês de ${nomeMes}!\n\n`
+    + `É só mencionar esta mensagem na hora da compra.\n\n`
+    + `Um grande abraço da nossa equipe! ${EMOJI_CORACAO}`;
+}
+
+window.enviarAniversarioWhatsApp = function(id){
+  const c = clientes.find(x=>x.id===id);
+  if(!c){ showToast('Cliente não encontrado.'); return; }
+  if(!c.contato){ showToast('Este cliente não tem contato cadastrado.'); return; }
+  if(!estaNoMesAniversario(c.dataNascimento)){ showToast('O botão de desconto só fica liberado no mês de aniversário do cliente.'); return; }
+  const telefone = formatarTelefoneWhatsApp(c.contato);
+  if(!telefone){ showToast('Número de contato inválido.'); return; }
+  const mensagem = montarMensagemAniversario(c);
+  const url = `https://wa.me/${telefone}?text=${encodeURIComponent(mensagem)}`;
+  window.open(url, '_blank');
 };
 
 let parcialGrupoAtual = null;
