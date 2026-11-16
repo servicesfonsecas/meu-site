@@ -180,6 +180,8 @@ tr.cancelled td.status-cell{text-decoration:none;}
 .tema-preset i{display:inline-flex;width:30px;height:14px;border-radius:7px;overflow:hidden;border:1px solid rgba(0,0,0,.15);}
 .tema-preset i b{flex:1;display:block;}
 .cor-row{display:grid;grid-template-columns:26px minmax(0,1fr) 54px 54px 54px 34px;gap:6px;align-items:center;margin-bottom:8px;}
+.fin-venc-input{padding:6px 8px;border:1px solid var(--line);border-radius:7px;font-family:'Inter',sans-serif;font-size:13px;min-width:132px;cursor:pointer;}
+.fin-venc-input:hover,.fin-venc-input:focus{border-color:var(--primary);outline:none;}
 .cor-sw{width:26px;height:26px;border-radius:7px;border:1px solid rgba(0,0,0,.18);}
 .cor-lbl{font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.2;}
 .cor-lbl small{display:block;font-weight:400;color:var(--ink-soft);font-size:11px;}
@@ -1915,7 +1917,7 @@ function renderFinanceiro(){
       <td>${g.clienteNome ? g.clienteNome : '<span style="color:var(--ink-soft);">Cliente não informado</span>'}${g.clienteContato ? `<div class="lookup-row-meta">${g.clienteContato}</div>` : ''}</td>
       <td class="num">${g.key.slice(-5).toUpperCase()}</td>
       <td>${fmtDate(g.data)}</td>
-      <td>${g.dataPagamento ? new Date(g.dataPagamento+'T00:00').toLocaleDateString('pt-BR') : '—'}</td>
+      <td><input type="date" class="fin-venc-input" value="${g.dataPagamento || ''}" title="Alterar data de vencimento" onchange="atualizarVencimentoGrupo('${g.key}', this.value)"></td>
       <td class="num" style="color:${cor};font-weight:600;">${prazoTxt}</td>
       <td class="num">${mv(g.saldoDevedor)}${g.totalAbatido>0 ? `<div class="lookup-row-meta">de ${brl(g.total)}, pago ${brl(g.totalAbatido)}</div>` : ''}</td>
       <td><span class="badge" style="background:${fundo};color:${cor};">${g.statusPior}</span></td>
@@ -2239,6 +2241,21 @@ window.atualizarDataPagamentoVenda = async function(id, novoValor){
   renderHistorico();
   renderFinanceiro();
   showToast('Data de pagamento atualizada.');
+};
+
+window.atualizarVencimentoGrupo = async function(key, novoValor){
+  const hoje = hojeLocalStr();
+  const itens = sales.filter(v => (v.vendaGrupo || v.id) === key && !v.cancelada);
+  if(!itens.length) return;
+  itens.forEach(v=>{
+    v.dataPagamento = novoValor || null;
+    // nova data futura (ou removida): deixa de estar vencido
+    if(v.statusPagamento === 'Vencido' && (!v.dataPagamento || v.dataPagamento >= hoje)) v.statusPagamento = 'Aguardando Pagamento';
+  });
+  await saveSales();
+  renderFinanceiro();
+  renderHistorico();
+  showToast('Data de vencimento atualizada.');
 };
 
 window.atualizarStatusPagamento = async function(id, novoStatus){
