@@ -180,6 +180,9 @@ tr.cancelled td.status-cell{text-decoration:none;}
 .tema-preset i{display:inline-flex;width:30px;height:14px;border-radius:7px;overflow:hidden;border:1px solid rgba(0,0,0,.15);}
 .tema-preset i b{flex:1;display:block;}
 .cor-row{display:grid;grid-template-columns:26px minmax(0,1fr) 54px 54px 54px 34px;gap:6px;align-items:center;margin-bottom:8px;}
+.fin-itens{min-width:230px;}
+.fin-item{display:flex;justify-content:space-between;gap:14px;font-size:12.5px;padding:2px 0;border-bottom:1px dotted var(--line);}
+.fin-item:last-child{border-bottom:none;}
 .fin-venc-input{padding:6px 8px;border:1px solid var(--line);border-radius:7px;font-family:'Inter',sans-serif;font-size:13px;min-width:132px;cursor:pointer;}
 .fin-venc-input:hover,.fin-venc-input:focus{border-color:var(--primary);outline:none;}
 .cor-sw{width:26px;height:26px;border-radius:7px;border:1px solid rgba(0,0,0,.18);}
@@ -417,7 +420,7 @@ tr.cancelled td.status-cell{text-decoration:none;}
       <div class="cards" id="fin-cards" style="margin-bottom:18px;"></div>
       <div style="overflow-x:auto;">
       <table>
-        <thead><tr><th>Cliente</th><th>Venda</th><th>Data da venda</th><th>Vencimento</th><th>Prazo</th><th>Valor</th><th>Status</th><th>Ação</th></tr></thead>
+        <thead><tr><th>Cliente</th><th>Venda</th><th>Itens da compra</th><th>Data da venda</th><th>Vencimento</th><th>Prazo</th><th>Valor</th><th>Status</th><th>Ação</th></tr></thead>
         <tbody id="fin-body"></tbody>
       </table>
       </div>
@@ -1056,7 +1059,19 @@ document.getElementById('btn-tema-padrao').addEventListener('click', ()=>{
   renderTemaEditor(); aplicarTema(temaRascunho);
 });
 
+function migrarModeloItens(){
+  try{
+    if(localStorage.getItem('msgItensMigrado')) return;
+    if(empresa.msgCobranca && !empresa.msgCobranca.includes('{itens}')){
+      const ls = empresa.msgCobranca.split('\n'); const i = ls.findIndex(l=>l.includes('{valor}'));
+      if(i >= 0){ ls.splice(i,0,'\u{1F6D2} Itens da compra:','{itens}',''); empresa.msgCobranca = ls.join('\n'); saveEmpresa(); }
+    }
+    localStorage.setItem('msgItensMigrado','1');
+  }catch(e){}
+}
+
 function renderBrand(){
+  migrarModeloItens();
   aplicarTema(empresa.cores); guardarTemaCache(empresa.cores);
   try{ if(empresa.msgCobranca) localStorage.setItem('msgCobranca', empresa.msgCobranca); else localStorage.removeItem('msgCobranca'); }catch(e){}
   document.getElementById('brand-name').innerHTML = empresa.nome ? empresa.nome.replace(/\n/g,'<br>') : 'Controle de<br>Estoque';
@@ -1847,6 +1862,8 @@ function atualizarVencidosAutomatico(){
 // ---------- Controle Financeiro ----------
 let financeiroGrupos = {};
 
+function escapeHtmlFin(t){ return String(t).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
 function renderFinanceiro(){
   atualizarVencidosAutomatico();
 
@@ -1866,9 +1883,11 @@ function renderFinanceiro(){
         statusPior: 'Aguardando Pagamento',
         total: 0,
         totalAbatido: 0,
-        cobradoEm: null
+        cobradoEm: null,
+        itens: []
       };
     }
+    grupos[key].itens.push({nome: v.produtoNome || 'Produto', qtd: v.qtd || 1, total: v.total || 0});
     grupos[key].total += v.total;
     grupos[key].totalAbatido += (v.valorPagoParcial || 0);
     if(status === 'Vencido') grupos[key].statusPior = 'Vencido';
@@ -1898,7 +1917,7 @@ function renderFinanceiro(){
 
   const body = document.getElementById('fin-body');
   if(!lista.length){
-    body.innerHTML = `<tr><td colspan="8" class="empty">${(dataDe||dataAte) ? 'Nenhuma cobrança pendente nesse período.' : 'Nenhum cliente com pagamento pendente. 🎉'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9" class="empty">${(dataDe||dataAte) ? 'Nenhuma cobrança pendente nesse período.' : 'Nenhum cliente com pagamento pendente. 🎉'}</td></tr>`;
     return;
   }
   const hoje = hojeLocalStr();
@@ -1916,6 +1935,7 @@ function renderFinanceiro(){
     <tr>
       <td>${g.clienteNome ? g.clienteNome : '<span style="color:var(--ink-soft);">Cliente não informado</span>'}${g.clienteContato ? `<div class="lookup-row-meta">${g.clienteContato}</div>` : ''}</td>
       <td class="num">${g.key.slice(-5).toUpperCase()}</td>
+      <td class="fin-itens">${g.itens.map(it=>`<div class="fin-item"><span>${it.qtd}x ${escapeHtmlFin(it.nome)}</span><span class="num">${mv(it.total)}</span></div>`).join('')}</td>
       <td>${fmtDate(g.data)}</td>
       <td><input type="date" class="fin-venc-input" value="${g.dataPagamento || ''}" title="Alterar data de vencimento" onchange="atualizarVencimentoGrupo('${g.key}', this.value)"></td>
       <td class="num" style="color:${cor};font-weight:600;">${prazoTxt}</td>
@@ -1951,6 +1971,7 @@ function formatarTelefoneWhatsApp(contato){
 const CAMPOS_COBRANCA = [
   ['{nome}','Primeiro nome'],
   ['{cliente}','Nome completo'],
+  ['{itens}','Lista de itens'],
   ['{valor}','Valor a pagar'],
   ['{situacao}','Frase do vencimento'],
   ['{vencimento}','Data de vencimento'],
@@ -1958,9 +1979,10 @@ const CAMPOS_COBRANCA = [
   ['{empresa}','Nome da empresa']
 ];
 function modeloCobrancaPadrao(){
-  const E = {sorriso:'\u{1F60A}', dinheiro:'\u{1F4B0}', celular:'\u{1F4F2}', check:'✅', coracao:'\u{1F499}', mao:'\u{1F91D}'};
+  const E = {sorriso:'\u{1F60A}', dinheiro:'\u{1F4B0}', celular:'\u{1F4F2}', carrinho:'\u{1F6D2}', check:'✅', coracao:'\u{1F499}', mao:'\u{1F91D}'};
   return `Olá, {nome}, tudo bem? ${E.sorriso}\n\n`
     + `Passando para lembrar que {situacao}\n\n`
+    + `${E.carrinho} Itens da compra:\n{itens}\n\n`
     + `${E.dinheiro} Valor a pagar: {valor}\n\n`
     + `${E.celular} Chave Pix: {pix}\n\n`
     + `Assim que realizar o pagamento, por gentileza, envie o comprovante por aqui para que possamos confirmar. ${E.check}\n\n`
@@ -1992,18 +2014,25 @@ function montarMensagemCobranca(g, modelo){
     const sem = linhas.filter(l=>!l.includes('{pix}'));
     texto = sem.some(l=>l.trim()) ? sem.join('\n') : texto;   // se só existir essa linha, mantém e deixa o campo vazio
   }
+  // sem itens: remove a linha de {itens} e o título ("Itens da compra:") logo acima
+  if(!(g.itens && g.itens.length)){
+    const ls = texto.split('\n'); const i = ls.findIndex(l=>l.includes('{itens}'));
+    if(i > 0 && /:\s*$/.test(ls[i-1])) ls.splice(i-1,2); else if(i >= 0) ls.splice(i,1);
+    texto = ls.join('\n');
+  }
   // sem nome: tira ", {nome}"
   if(!primeiroNome) texto = texto.replace(/,?\s*\{nome\}/g,'');
   const valores = {
     '{nome}': primeiroNome,
     '{cliente}': g.clienteNome || '',
+    '{itens}': (g.itens && g.itens.length) ? g.itens.map(it=>`• ${it.qtd}x ${it.nome} — ${brl(it.total)}`).join('\n') : '',
     '{valor}': brl(g.saldoDevedor != null ? g.saldoDevedor : g.total),
     '{situacao}': fraseVencimento,
     '{vencimento}': dataVencFmt,
     '{pix}': empresa.chavePix || '',
     '{empresa}': nomeEmpresa
   };
-  texto = texto.replace(/\{(nome|cliente|valor|situacao|vencimento|pix|empresa)\}/g, m=>valores[m]);
+  texto = texto.replace(/\{(nome|cliente|itens|valor|situacao|vencimento|pix|empresa)\}/g, m=>valores[m]);
   return texto.replace(/\n{3,}/g,'\n\n').trim();
 }
 
@@ -2053,7 +2082,7 @@ window.copiarMensagemCobranca = async function(key){
 const modeloOverlay = document.getElementById('modal-modelo-overlay');
 const modeloTexto = document.getElementById('modelo-texto');
 function atualizarPreviaModelo(){
-  const exemplo = Object.values(financeiroGrupos || {})[0] || {clienteNome:'Maria Silva', total:350, dataPagamento: hojeLocalStr()};
+  const exemplo = Object.values(financeiroGrupos || {})[0] || {clienteNome:'Maria Silva', total:350, dataPagamento: hojeLocalStr(), itens:[{nome:'Relógio de parede', qtd:1, total:250},{nome:'Pilha AA', qtd:4, total:100}]};
   document.getElementById('modelo-previa').textContent = montarMensagemCobranca(exemplo, modeloTexto.value);
 }
 function abrirModeloCobranca(){
